@@ -15,4 +15,8 @@ variable "ecr_image_uri" {
   type        = string
 }
 
+variable "image_tag" {
+  description = "Docker image tag for ECR"
+  type        = string
+}
 
