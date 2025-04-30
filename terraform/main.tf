@@ -1,7 +1,3 @@
-provider "aws" {
-  region = "us-east-1"
-}
-
 # ECR Repository
 resource "aws_ecr_repository" "strapi" {
   name = "strapi-repo"
