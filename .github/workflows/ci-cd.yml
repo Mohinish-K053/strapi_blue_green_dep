@@ -80,16 +80,19 @@ jobs:
             --cpu "512" \
             --memory "1024" \
             --execution-role-arn arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/ecsTaskExecutionRole \
-            --container-definitions "[{
-              \"name\": \"strapi\",
-              \"image\": \"${IMAGE_URI}\",
-              \"portMappings\": [{\"containerPort\": 1337, \"protocol\": \"tcp\"}],
-              \"essential\": true
-            }]"
+            --container-definitions '[
+              {
+                "name": "strapi",
+                "image": "'"$IMAGE_URI"'",
+                "portMappings": [{"containerPort": 1337, "protocol": "tcp"}],
+                "essential": true
+              }
+            ]'
 
-      - name: Trigger CodeDeploy Deployment
+      - name: Create AppSpec File
         if: ${{ github.event.inputs.destroy != 'true' }}
         run: |
+          # Get the latest task definition ARN
           TASK_DEF_ARN=$(aws ecs list-task-definitions \
             --family-prefix strapi-task \
             --sort DESC \
@@ -103,25 +106,34 @@ jobs:
           fi
 
           echo "Using Task Definition: $TASK_DEF_ARN"
-
-          aws deploy create-deployment \
-            --application-name strapi-app \
-            --deployment-group-name strapi-dg \
-            --revision revisionType=AppSpecContent,appSpecContent='{
-              "version": 1,
-              "Resources": [
-                {
-                  "TargetService": {
-                    "Type": "AWS::ECS::Service",
-                    "Properties": {
-                      "TaskDefinition": "'"$TASK_DEF_ARN"'",
-                      "LoadBalancerInfo": {
-                        "ContainerName": "strapi",
-                        "ContainerPort": 1337
-                      }
+          
+          # Create AppSpec JSON file
+          echo '{
+            "version": 1,
+            "Resources": [
+              {
+                "TargetService": {
+                  "Type": "AWS::ECS::Service",
+                  "Properties": {
+                    "TaskDefinition": "'$TASK_DEF_ARN'",
+                    "LoadBalancerInfo": {
+                      "ContainerName": "strapi",
+                      "ContainerPort": 1337
                     }
                   }
                 }
-              ]
-            }' \
+              }
+            ]
+          }' > appspec.json
+          
+          # Store the JSON content as an environment variable for the next step
+          echo "APPSPEC_CONTENT=$(cat appspec.json | jq -c .)" >> $GITHUB_ENV
+
+      - name: Deploy with CodeDeploy
+        if: ${{ github.event.inputs.destroy != 'true' }}
+        run: |
+          aws deploy create-deployment \
+            --application-name strapi-app \
+            --deployment-group-name strapi-dg \
+            --revision "revisionType=AppSpecContent,appSpecContent=${{ env.APPSPEC_CONTENT }}" \
             --deployment-config-name CodeDeployDefault.ECSAllAtOnce
