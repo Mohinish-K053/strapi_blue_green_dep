@@ -1,15 +1,15 @@
-variable "aws_region" {
-  default = "ap-south-1"
-}
+# variable "aws_region" {
+#   default = "ap-south-1"
+# }
 
-variable "container_port" {
-  default = 1337
-}
+# variable "container_port" {
+#   default = 1337
+# }
 
-variable "ecr_image_uri" {
-  description = "Full URI of the Docker image in ECR"
-  type        = string
-}
+# variable "ecr_image_uri" {
+#   description = "Full URI of the Docker image in ECR"
+#   type        = string
+# }
 
 # VPC and Subnets
 
