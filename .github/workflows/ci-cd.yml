@@ -103,29 +103,31 @@ jobs:
 
           echo "Using Task Definition ARN: $TASK_DEF_ARN"
 
-          # Construct AppSpec JSON and export it as environment variable safely
-          echo "{}" | jq --arg TASK_DEF "$TASK_DEF_ARN" \
-            '.version = 1 |
-             .Resources = [{
-               "TargetService": {
-                 "Type": "AWS::ECS::Service",
-                 "Properties": {
-                   "TaskDefinition": $TASK_DEF,
-                   "LoadBalancerInfo": {
-                     "ContainerName": "strapi",
-                     "ContainerPort": 1337
-                   }
-                 }
-               }
-             }]' > appspec.json
-
-          echo "APPSPEC_CONTENT=$(jq -c . appspec.json)" >> $GITHUB_ENV
+          # Create AppSpec file
+          jq -n --arg TASK_DEF "$TASK_DEF_ARN" '{
+            version: 1,
+            Resources: [{
+              TargetService: {
+                Type: "AWS::ECS::Service",
+                Properties: {
+                  TaskDefinition: $TASK_DEF,
+                  LoadBalancerInfo: {
+                    ContainerName: "strapi",
+                    ContainerPort: 1337
+                  }
+                }
+              }
+            }]
+          }' > appspec.json
 
       - name: Deploy with CodeDeploy
         if: ${{ github.event.inputs.destroy != 'true' }}
         run: |
-          DEPLOYMENT_JSON=$(jq -nc --argjson content "$APPSPEC_CONTENT" \
-            '{revisionType: "AppSpecContent", appSpecContent: $content}')
+          # Read and encode AppSpec content
+          APPSPEC_CONTENT=$(cat appspec.json | jq -c .)
+
+          DEPLOYMENT_JSON=$(jq -nc --arg content "$APPSPEC_CONTENT" \
+            '{revisionType: "AppSpecContent", appSpecContent: {content: $content}}')
 
           echo "Triggering deployment with CodeDeploy..."
           aws deploy create-deployment \
