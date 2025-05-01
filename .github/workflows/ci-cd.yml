@@ -76,13 +76,33 @@ jobs:
             --query "taskDefinitionArns[0]" \
             --output text)
 
-          if [ -z "$TASK_DEF_ARN" ] || [ "$TASK_DEF_ARN" = "None" ]; then
-            echo "ERROR: No task definition found for family 'strapi-task'"
-            exit 1
+          # If task definition doesn't exist, register a new one
+          if [ "$TASK_DEF_ARN" == "None" ] || [ -z "$TASK_DEF_ARN" ]; then
+            echo "ERROR: No task definition found for family 'strapi-task'. Registering a new task definition."
+            
+            # Register a new task definition
+            TASK_DEF_ARN=$(aws ecs register-task-definition \
+              --family strapi-task \
+              --network-mode awsvpc \
+              --container-definitions '[{
+                "name": "strapi",
+                "image": "'"$ECR_IMAGE_URI"'",
+                "essential": true,
+                "portMappings": [{"containerPort": 1337, "hostPort": 1337}]
+              }]' \
+              --query "taskDefinition.taskDefinitionArn" \
+              --output text)
+
+            # Check if registration was successful
+            if [ -z "$TASK_DEF_ARN" ] || [ "$TASK_DEF_ARN" == "None" ]; then
+              echo "ERROR: Failed to register task definition."
+              exit 1
+            fi
           fi
 
           echo "Using Task Definition: $TASK_DEF_ARN"
 
+          # Create deployment with CodeDeploy
           aws deploy create-deployment \
             --application-name strapi-app \
             --deployment-group-name strapi-dg \
