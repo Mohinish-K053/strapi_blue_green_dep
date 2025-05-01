@@ -1,6 +1,4 @@
-
 # VPC and Subnets
-
 data "aws_vpc" "default" {
   default = true
 }
@@ -15,6 +13,9 @@ data "aws_subnets" "default" {
 # ECR Repository
 resource "aws_ecr_repository" "strapi_repo" {
   name = "strapi-repo"
+  lifecycle {
+    ignore_changes = [name]
+  }
 }
 
 # ECS Cluster
@@ -31,7 +32,6 @@ resource "aws_cloudwatch_log_group" "strapi_logs" {
 # IAM Roles
 resource "aws_iam_role" "ecs_task_execution" {
   name = "ecsTaskExecutionRole"
-
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
@@ -65,9 +65,33 @@ resource "aws_iam_role" "codedeploy_role" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "codedeploy_role_attach" {
+resource "aws_iam_role_policy_attachment" "codedeploy_attach" {
   role       = aws_iam_role.codedeploy_role.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSCodeDeployRoleForECS"
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole"
+}
+
+# Add inline policy for ecs:DescribeServices
+resource "aws_iam_role_policy" "codedeploy_inline" {
+  name = "codedeploy-inline"
+  role = aws_iam_role.codedeploy_role.id
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect = "Allow",
+      Action = [
+        "ecs:DescribeServices",
+        "ecs:UpdateService",
+        "ecs:ListTasks",
+        "ecs:DescribeTaskDefinition",
+        "elasticloadbalancing:*",
+        "ec2:Describe*",
+        "cloudwatch:*",
+        "s3:Get*",
+        "s3:List*"
+      ],
+      Resource = "*"
+    }]
+  })
 }
 
 # Security Groups
@@ -124,6 +148,7 @@ resource "aws_lb_target_group" "strapi_tg_blue" {
   protocol    = "HTTP"
   target_type = "ip"
   vpc_id      = data.aws_vpc.default.id
+
   health_check {
     path                = "/"
     interval            = 30
@@ -140,6 +165,7 @@ resource "aws_lb_target_group" "strapi_tg_green" {
   protocol    = "HTTP"
   target_type = "ip"
   vpc_id      = data.aws_vpc.default.id
+
   health_check {
     path                = "/"
     interval            = 30
@@ -154,6 +180,7 @@ resource "aws_lb_listener" "strapi_listener" {
   load_balancer_arn = aws_lb.strapi_alb.arn
   port              = 1337
   protocol          = "HTTP"
+
   default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.strapi_tg_blue.arn
@@ -169,32 +196,30 @@ resource "aws_ecs_task_definition" "strapi_task" {
   memory                   = "512"
   execution_role_arn       = aws_iam_role.ecs_task_execution.arn
 
-  container_definitions = jsonencode([
-    {
-      name  = "strapi",
-      image = var.ecr_image_uri,
-      essential = true,
-      portMappings = [{
-        containerPort = var.container_port,
-        hostPort      = var.container_port
-      }],
-      logConfiguration = {
-        logDriver = "awslogs",
-        options = {
-          awslogs-group         = aws_cloudwatch_log_group.strapi_logs.name,
-          awslogs-region        = var.aws_region,
-          awslogs-stream-prefix = "strapi"
-        }
-      },
-      environment = [
-        { name = "APP_KEYS",            value = join(",", [for i in range(4) : base64encode(uuid())]) },
-        { name = "API_TOKEN_SALT",      value = base64encode(uuid()) },
-        { name = "ADMIN_JWT_SECRET",    value = base64encode(uuid()) },
-        { name = "TRANSFER_TOKEN_SALT", value = base64encode(uuid()) },
-        { name = "JWT_SECRET",          value = base64encode(uuid()) }
-      ]
-    }
-  ])
+  container_definitions = jsonencode([{
+    name  = "strapi",
+    image = var.ecr_image_uri,
+    essential = true,
+    portMappings = [{
+      containerPort = var.container_port,
+      hostPort      = var.container_port
+    }],
+    logConfiguration = {
+      logDriver = "awslogs",
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.strapi_logs.name,
+        awslogs-region        = var.aws_region,
+        awslogs-stream-prefix = "strapi"
+      }
+    },
+    environment = [
+      { name = "APP_KEYS",            value = join(",", [for i in range(4) : base64encode(uuid())]) },
+      { name = "API_TOKEN_SALT",      value = base64encode(uuid()) },
+      { name = "ADMIN_JWT_SECRET",    value = base64encode(uuid()) },
+      { name = "TRANSFER_TOKEN_SALT", value = base64encode(uuid()) },
+      { name = "JWT_SECRET",          value = base64encode(uuid()) }
+    ]
+  }])
 }
 
 # ECS Service
@@ -203,27 +228,32 @@ resource "aws_ecs_service" "strapi_service" {
   cluster         = aws_ecs_cluster.strapi_cluster.id
   task_definition = aws_ecs_task_definition.strapi_task.arn
   desired_count   = 1
+
   deployment_controller {
     type = "CODE_DEPLOY"
   }
+
   capacity_provider_strategy {
     capacity_provider = "FARGATE_SPOT"
     weight            = 1
   }
+
   network_configuration {
-    subnets         = data.aws_subnets.default.ids
-    security_groups = [aws_security_group.task_sg.id]
+    subnets          = data.aws_subnets.default.ids
+    security_groups  = [aws_security_group.task_sg.id]
     assign_public_ip = true
   }
+
   load_balancer {
     target_group_arn = aws_lb_target_group.strapi_tg_blue.arn
     container_name   = "strapi"
     container_port   = var.container_port
   }
+
   depends_on = [aws_lb_listener.strapi_listener]
 }
 
-# CodeDeploy App and Deployment Group
+# CodeDeploy App & Deployment Group
 resource "aws_codedeploy_app" "strapi" {
   name             = "strapi-app"
   compute_platform = "ECS"
@@ -233,10 +263,12 @@ resource "aws_codedeploy_deployment_group" "strapi_dg" {
   app_name              = aws_codedeploy_app.strapi.name
   deployment_group_name = "strapi-dg"
   service_role_arn      = aws_iam_role.codedeploy_role.arn
+
   deployment_style {
     deployment_type   = "BLUE_GREEN"
     deployment_option = "WITH_TRAFFIC_CONTROL"
   }
+
   blue_green_deployment_config {
     deployment_ready_option {
       action_on_timeout = "CONTINUE_DEPLOYMENT"
@@ -246,10 +278,12 @@ resource "aws_codedeploy_deployment_group" "strapi_dg" {
       termination_wait_time_in_minutes = 5
     }
   }
+
   ecs_service {
     cluster_name = aws_ecs_cluster.strapi_cluster.name
     service_name = aws_ecs_service.strapi_service.name
   }
+
   load_balancer_info {
     target_group_pair_info {
       prod_traffic_route {
@@ -263,14 +297,16 @@ resource "aws_codedeploy_deployment_group" "strapi_dg" {
       }
     }
   }
+
   auto_rollback_configuration {
     enabled = true
     events  = ["DEPLOYMENT_FAILURE"]
   }
+
   depends_on = [aws_ecs_service.strapi_service]
 }
 
-# CloudWatch Monitoring
+# CloudWatch Alarms
 resource "aws_cloudwatch_metric_alarm" "cpu_high" {
   alarm_name          = "HighCPUUtilization"
   comparison_operator = "GreaterThanThreshold"
@@ -316,10 +352,7 @@ resource "aws_cloudwatch_dashboard" "ecs_dashboard" {
         properties = {
           metrics = [
             ["AWS/ECS", "CPUUtilization", "ClusterName", aws_ecs_cluster.strapi_cluster.name, "ServiceName", aws_ecs_service.strapi_service.name],
-            [".", "MemoryUtilization", ".", ".", ".", "."],
-            [".", "NetworkIn", ".", ".", ".", "."],
-            [".", "NetworkOut", ".", ".", ".", "."],
-            [".", "RunningTaskCount", ".", ".", ".", "."]
+            [".", "MemoryUtilization", ".", ".", ".", "."]
           ],
           view    = "timeSeries",
           stacked = false,
