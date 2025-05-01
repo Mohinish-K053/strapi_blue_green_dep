@@ -69,10 +69,19 @@ jobs:
       - name: Trigger CodeDeploy Deployment
         if: ${{ github.event.inputs.destroy != 'true' }}
         run: |
-          TASK_DEF_ARN=$(aws ecs describe-task-definition \
-            --task-definition strapi-task \
-            --query "taskDefinition.taskDefinitionArn" \
+          TASK_DEF_ARN=$(aws ecs list-task-definitions \
+            --family-prefix strapi-task \
+            --sort DESC \
+            --max-items 1 \
+            --query "taskDefinitionArns[0]" \
             --output text)
+
+          if [ -z "$TASK_DEF_ARN" ] || [ "$TASK_DEF_ARN" = "None" ]; then
+            echo "ERROR: No task definition found for family 'strapi-task'"
+            exit 1
+          fi
+
+          echo "Using Task Definition: $TASK_DEF_ARN"
 
           aws deploy create-deployment \
             --application-name strapi-app \
