@@ -1,9 +1,6 @@
 name: CI/CD Strapi Blue/Green
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
       destroy:
@@ -63,7 +60,7 @@ jobs:
         working-directory: ./terraform
         run: |
           if [ "${{ github.event.inputs.destroy }}" = "true" ]; then
-            terraform destroy -auto-approve
+            terraform destroy -auto-approve -var="ecr_image_uri=dummy"
           else
             terraform apply -auto-approve \
               -var="ecr_image_uri=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO_NAME }}:${{ github.sha }}"
