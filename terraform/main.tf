@@ -70,7 +70,6 @@ resource "aws_iam_role_policy_attachment" "codedeploy_attach" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole"
 }
 
-# Add inline policy for ecs:DescribeServices
 resource "aws_iam_role_policy" "codedeploy_inline" {
   name = "codedeploy-inline"
   role = aws_iam_role.codedeploy_role.id
@@ -274,6 +273,7 @@ resource "aws_codedeploy_deployment_group" "strapi_dg" {
     deployment_ready_option {
       action_on_timeout = "CONTINUE_DEPLOYMENT"
     }
+
     terminate_blue_instances_on_deployment_success {
       action                            = "TERMINATE"
       termination_wait_time_in_minutes = 5
@@ -290,9 +290,11 @@ resource "aws_codedeploy_deployment_group" "strapi_dg" {
       prod_traffic_route {
         listener_arns = [aws_lb_listener.strapi_listener.arn]
       }
+
       target_group {
         name = aws_lb_target_group.strapi_tg_blue.name
       }
+
       target_group {
         name = aws_lb_target_group.strapi_tg_green.name
       }
@@ -306,6 +308,7 @@ resource "aws_codedeploy_deployment_group" "strapi_dg" {
 
   depends_on = [aws_ecs_service.strapi_service]
 }
+
 
 # CloudWatch Alarms
 resource "aws_cloudwatch_metric_alarm" "cpu_high" {
