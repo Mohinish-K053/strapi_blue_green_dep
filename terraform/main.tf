@@ -263,6 +263,7 @@ resource "aws_codedeploy_deployment_group" "strapi_dg" {
   app_name              = aws_codedeploy_app.strapi.name
   deployment_group_name = "strapi-dg"
   service_role_arn      = aws_iam_role.codedeploy_role.arn
+  deployment_config_name = "CodeDeployDefault.ECSAllAtOnce"
 
   deployment_style {
     deployment_type   = "BLUE_GREEN"
