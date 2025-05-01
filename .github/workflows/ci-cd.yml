@@ -101,7 +101,7 @@ jobs:
             --output text)
 
           if [ -z "$TASK_DEF_ARN" ] || [ "$TASK_DEF_ARN" = "None" ]; then
-            echo "ERROR: No task definition found for family 'strapi-task'"
+            echo "ERROR: No valid task definition found for family 'strapi-task'"
             exit 1
           fi
 
@@ -115,7 +115,7 @@ jobs:
                 "TargetService": {
                   "Type": "AWS::ECS::Service",
                   "Properties": {
-                    "TaskDefinition": "'$TASK_DEF_ARN'",
+                    "TaskDefinition": "'"$TASK_DEF_ARN"'",
                     "LoadBalancerInfo": {
                       "ContainerName": "strapi",
                       "ContainerPort": 1337
