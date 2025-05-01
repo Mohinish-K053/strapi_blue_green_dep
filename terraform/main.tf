@@ -10,11 +10,11 @@ data "aws_subnets" "default" {
   }
 }
 
-# ECR Repository
+# ECR Repository (with lifecycle to avoid error when it already exists)
 resource "aws_ecr_repository" "strapi_repo" {
   name = "strapi-repo"
   lifecycle {
-    ignore_changes = [name]
+    ignore_changes = [name]  # Ignore changes to the name (avoid recreate if it exists)
   }
 }
 
@@ -39,8 +39,7 @@ resource "aws_iam_role" "ecs_task_execution" {
       Principal = {
         Service = "ecs-tasks.amazonaws.com"
       },
-      Effect = "Allow",
-      Sid    = ""
+      Effect = "Allow"
     }]
   })
 }
@@ -52,7 +51,6 @@ resource "aws_iam_role_policy_attachment" "ecs_execution_attach" {
 
 resource "aws_iam_role" "codedeploy_role" {
   name = "CodeDeployRole"
-
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
@@ -71,8 +69,8 @@ resource "aws_iam_role_policy_attachment" "codedeploy_attach" {
 }
 
 resource "aws_iam_role_policy" "codedeploy_inline" {
-  name = "codedeploy-inline"
-  role = aws_iam_role.codedeploy_role.id
+  name   = "codedeploy-inline"
+  role   = aws_iam_role.codedeploy_role.id
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
@@ -308,7 +306,6 @@ resource "aws_codedeploy_deployment_group" "strapi_dg" {
 
   depends_on = [aws_ecs_service.strapi_service]
 }
-
 
 # CloudWatch Alarms
 resource "aws_cloudwatch_metric_alarm" "cpu_high" {
