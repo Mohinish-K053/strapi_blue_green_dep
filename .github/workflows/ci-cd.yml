@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  AWS_REGION: us-east-1
+  AWS_REGION: ap-south-1
   ECR_REPO_NAME: strapi-repo
 
 jobs:
@@ -50,12 +50,33 @@ jobs:
         working-directory: ./terraform
         run: |
           terraform apply -auto-approve \
-            -var="image_tag=${{ github.sha }}"
+            -var="ecr_image_uri=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO_NAME }}:${{ github.sha }}"
 
       - name: Trigger CodeDeploy Deployment
         run: |
+          TASK_DEF_ARN=$(aws ecs describe-task-definition \
+            --task-definition strapi-task \
+            --query "taskDefinition.taskDefinitionArn" \
+            --output text)
+
           aws deploy create-deployment \
             --application-name strapi-app \
-            --deployment-group-name strapi-deployment-group \
-            --revision revisionType=AppSpecContent,appSpecContent={content="{}"} \
+            --deployment-group-name strapi-dg \
+            --revision revisionType=AppSpecContent,appSpecContent='{
+              "version": 1,
+              "Resources": [
+                {
+                  "TargetService": {
+                    "Type": "AWS::ECS::Service",
+                    "Properties": {
+                      "TaskDefinition": "'"$TASK_DEF_ARN"'",
+                      "LoadBalancerInfo": {
+                        "ContainerName": "strapi",
+                        "ContainerPort": 1337
+                      }
+                    }
+                  }
+                }
+              ]
+            }' \
             --deployment-config-name CodeDeployDefault.ECSAllAtOnce
