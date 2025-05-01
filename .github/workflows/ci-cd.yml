@@ -70,7 +70,6 @@ jobs:
         if: ${{ github.event.inputs.destroy != 'true' }}
         run: |
           IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO_NAME }}:${{ github.sha }}"
-          
           echo "Registering new ECS task definition with image: $IMAGE_URI"
 
           aws ecs register-task-definition \
@@ -80,19 +79,16 @@ jobs:
             --cpu "512" \
             --memory "1024" \
             --execution-role-arn arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/ecsTaskExecutionRole \
-            --container-definitions '[
-              {
-                "name": "strapi",
-                "image": "'"$IMAGE_URI"'",
-                "portMappings": [{"containerPort": 1337, "protocol": "tcp"}],
-                "essential": true
-              }
-            ]'
+            --container-definitions "[{
+              \"name\": \"strapi\",
+              \"image\": \"$IMAGE_URI\",
+              \"portMappings\": [{\"containerPort\": 1337}],
+              \"essential\": true
+            }]"
 
-      - name: Create AppSpec File
+      - name: Get Task Definition ARN & Create AppSpec Content
         if: ${{ github.event.inputs.destroy != 'true' }}
         run: |
-          # Get the latest task definition ARN
           TASK_DEF_ARN=$(aws ecs list-task-definitions \
             --family-prefix strapi-task \
             --sort DESC \
@@ -101,39 +97,39 @@ jobs:
             --output text)
 
           if [ -z "$TASK_DEF_ARN" ] || [ "$TASK_DEF_ARN" = "None" ]; then
-            echo "ERROR: No task definition found for family 'strapi-task'"
+            echo "ERROR: No valid task definition ARN found"
             exit 1
           fi
 
-          echo "Using Task Definition: $TASK_DEF_ARN"
-          
-          # Create AppSpec JSON file
-          echo '{
-            "version": 1,
-            "Resources": [
-              {
-                "TargetService": {
-                  "Type": "AWS::ECS::Service",
-                  "Properties": {
-                    "TaskDefinition": "'$TASK_DEF_ARN'",
-                    "LoadBalancerInfo": {
-                      "ContainerName": "strapi",
-                      "ContainerPort": 1337
-                    }
-                  }
-                }
-              }
-            ]
-          }' > appspec.json
-          
-          # Store the JSON content as an environment variable for the next step
-          echo "APPSPEC_CONTENT=$(cat appspec.json | jq -c .)" >> $GITHUB_ENV
+          echo "Using Task Definition ARN: $TASK_DEF_ARN"
+
+          # Construct AppSpec JSON and export it as environment variable safely
+          echo "{}" | jq --arg TASK_DEF "$TASK_DEF_ARN" \
+            '.version = 1 |
+             .Resources = [{
+               "TargetService": {
+                 "Type": "AWS::ECS::Service",
+                 "Properties": {
+                   "TaskDefinition": $TASK_DEF,
+                   "LoadBalancerInfo": {
+                     "ContainerName": "strapi",
+                     "ContainerPort": 1337
+                   }
+                 }
+               }
+             }]' > appspec.json
+
+          echo "APPSPEC_CONTENT=$(jq -c . appspec.json)" >> $GITHUB_ENV
 
       - name: Deploy with CodeDeploy
         if: ${{ github.event.inputs.destroy != 'true' }}
         run: |
+          DEPLOYMENT_JSON=$(jq -nc --argjson content "$APPSPEC_CONTENT" \
+            '{revisionType: "AppSpecContent", appSpecContent: $content}')
+
+          echo "Triggering deployment with CodeDeploy..."
           aws deploy create-deployment \
             --application-name strapi-app \
             --deployment-group-name strapi-dg \
-            --revision "revisionType=AppSpecContent,appSpecContent=${{ env.APPSPEC_CONTENT }}" \
+            --revision "$DEPLOYMENT_JSON" \
             --deployment-config-name CodeDeployDefault.ECSAllAtOnce
