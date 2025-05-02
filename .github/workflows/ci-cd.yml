@@ -64,7 +64,7 @@ jobs:
           else
             terraform apply -auto-approve \
               -var="ecr_image_uri=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO_NAME }}:${{ github.sha }}"
-          fi  # ✅ FIXED: added missing fi
+          fi
 
       - name: Fetch Latest Task Definition ARN (with retry)
         if: ${{ github.event.inputs.destroy != 'true' }}
@@ -81,16 +81,18 @@ jobs:
 
             if [ "$TASK_DEF_ARN" != "None" ] && [ -n "$TASK_DEF_ARN" ]; then
               echo "Found task definition ARN: $TASK_DEF_ARN"
-              echo "task_def_arn=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
-              exit 0
+              echo "task_def_arn=$TASK_DEF_ARN" >> "$GITHUB_OUTPUT"
+              break
             fi
 
             echo "Attempt $i: ARN not ready yet, waiting 15 seconds..."
             sleep 15
           done
 
-          echo "ERROR: Failed to fetch ECS task definition ARN after 5 attempts."
-          exit 1
+          if [ -z "$TASK_DEF_ARN" ] || [ "$TASK_DEF_ARN" = "None" ]; then
+            echo "ERROR: Failed to fetch ECS task definition ARN after 5 attempts."
+            exit 1
+          fi
 
       - name: Create AppSpec File
         if: ${{ github.event.inputs.destroy != 'true' }}
@@ -108,7 +110,7 @@ jobs:
                   }
                 }
               }
-            }]
+            } ]
           }' > appspec.json
 
       - name: Deploy via CodeDeploy
