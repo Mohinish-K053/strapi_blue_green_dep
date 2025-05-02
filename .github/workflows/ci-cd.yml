@@ -36,27 +36,23 @@ jobs:
           aws ecr describe-repositories --repository-names $ECR_REPO_NAME || \
           aws ecr create-repository --repository-name $ECR_REPO_NAME
 
-      - name: Build Docker Image
+      - name: Build and Push Docker Image
         if: ${{ github.event.inputs.destroy != 'true' }}
         run: |
-          docker build -t $ECR_REPO_NAME:${{ github.sha }} .
-          docker tag $ECR_REPO_NAME:${{ github.sha }} ${{ steps.login-ecr.outputs.registry }}/$ECR_REPO_NAME:${{ github.sha }}
-
-      - name: Push Docker Image to ECR
-        if: ${{ github.event.inputs.destroy != 'true' }}
-        run: |
-          docker push ${{ steps.login-ecr.outputs.registry }}/$ECR_REPO_NAME:${{ github.sha }}
+          IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/$ECR_REPO_NAME:${{ github.sha }}
+          docker build -t $IMAGE_URI .
+          docker push $IMAGE_URI
 
       - name: Install Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.7
 
-      - name: Initialize Terraform
+      - name: Terraform Init
         working-directory: ./terraform
         run: terraform init
 
-      - name: Apply or Destroy Terraform
+      - name: Terraform Apply or Destroy
         working-directory: ./terraform
         run: |
           if [ "${{ github.event.inputs.destroy }}" = "true" ]; then
@@ -66,59 +62,32 @@ jobs:
               -var="ecr_image_uri=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO_NAME }}:${{ github.sha }}"
           fi
 
-      - name: Fetch Latest Task Definition ARN (with retry)
-        if: ${{ github.event.inputs.destroy != 'true' }}
-        id: fetch-taskdef
-        run: |
-          echo "Fetching latest ECS task definition ARN (with retries)..."
-          for i in {1..5}; do
-            TASK_DEF_ARN=$(aws ecs list-task-definitions \
-              --family-prefix strapi-task \
-              --sort DESC \
-              --max-items 1 \
-              --query "taskDefinitionArns[0]" \
-              --output text)
-
-            if [ "$TASK_DEF_ARN" != "None" ] && [ -n "$TASK_DEF_ARN" ]; then
-              echo "Found task definition ARN: $TASK_DEF_ARN"
-              echo "task_def_arn=$TASK_DEF_ARN" >> "$GITHUB_OUTPUT"
-              break
-            fi
-
-            echo "Attempt $i: ARN not ready yet, waiting 15 seconds..."
-            sleep 15
-          done
-
-          if [ -z "$TASK_DEF_ARN" ] || [ "$TASK_DEF_ARN" = "None" ]; then
-            echo "ERROR: Failed to fetch ECS task definition ARN after 5 attempts."
-            exit 1
-          fi
-
-      - name: Create AppSpec File
+      - name: Replace Image URI in taskdef.json
         if: ${{ github.event.inputs.destroy != 'true' }}
         run: |
-          jq -n --arg TASK_DEF "${{ steps.fetch-taskdef.outputs.task_def_arn }}" '{
-            version: 1,
-            Resources: [ {
-              TargetService: {
-                Type: "AWS::ECS::Service",
-                Properties: {
-                  TaskDefinition: $TASK_DEF,
-                  LoadBalancerInfo: {
-                    ContainerName: "strapi",
-                    ContainerPort: 1337
-                  }
-                }
-              }
-            } ]
-          }' > appspec.json
+          IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO_NAME }}:${{ github.sha }}
+          sed "s|REPLACE_IMAGE_URI|$IMAGE_URI|g" taskdef.json > taskdef.rendered.json
+
+      - name: Register Task Definition
+        if: ${{ github.event.inputs.destroy != 'true' }}
+        id: register-task
+        run: |
+          TASK_DEF_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://taskdef.rendered.json \
+            --query "taskDefinition.taskDefinitionArn" --output text)
+          echo "TASK_DEF_ARN=$TASK_DEF_ARN" >> $GITHUB_ENV
+
+      - name: Replace Task Def ARN in appspec.json
+        if: ${{ github.event.inputs.destroy != 'true' }}
+        run: |
+          sed "s|REPLACE_TASK_DEFINITION_ARN|$TASK_DEF_ARN|g" appspec.json > appspec.rendered.json
 
       - name: Deploy via CodeDeploy
         if: ${{ github.event.inputs.destroy != 'true' }}
         run: |
-          echo "Creating CodeDeploy deployment..."
+          echo "Deploying via CodeDeploy..."
           aws deploy create-deployment \
             --application-name strapi-app \
             --deployment-group-name strapi-dg \
-            --revision "appSpecContent={content=$(jq -c . < appspec.json)}" \
+            --revision "appSpecContent={content=$(jq -c . < appspec.rendered.json)}" \
             --deployment-config-name CodeDeployDefault.ECSAllAtOnce

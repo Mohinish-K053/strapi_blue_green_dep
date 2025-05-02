@@ -10,9 +10,6 @@ data "aws_subnets" "default" {
   }
 }
 
-# NOTE: ECR repository is created by CI/CD pipeline.
-# Do not define it in Terraform to avoid conflicts.
-
 # ECS Cluster
 resource "aws_ecs_cluster" "strapi_cluster" {
   name = "strapi-cluster"
@@ -24,17 +21,17 @@ resource "aws_cloudwatch_log_group" "strapi_logs" {
   retention_in_days = 7
 }
 
-# IAM Roles
+# IAM Roles for ECS and CodeDeploy
 resource "aws_iam_role" "ecs_task_execution" {
   name = "ecsTaskExecutionRole"
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
-      Action = "sts:AssumeRole",
+      Action    = "sts:AssumeRole",
       Principal = {
         Service = "ecs-tasks.amazonaws.com"
       },
-      Effect = "Allow"
+      Effect    = "Allow"
     }]
   })
 }
@@ -49,11 +46,11 @@ resource "aws_iam_role" "codedeploy_role" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
-      Effect = "Allow",
+      Effect    = "Allow",
       Principal = {
         Service = "codedeploy.amazonaws.com"
       },
-      Action = "sts:AssumeRole"
+      Action    = "sts:AssumeRole"
     }]
   })
 }
@@ -69,8 +66,8 @@ resource "aws_iam_role_policy" "codedeploy_inline" {
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
-      Effect = "Allow",
-      Action = [
+      Effect   = "Allow",
+      Action   = [
         "ecs:DescribeServices",
         "ecs:UpdateService",
         "ecs:ListTasks",
@@ -86,7 +83,7 @@ resource "aws_iam_role_policy" "codedeploy_inline" {
   })
 }
 
-# Security Groups
+# Security Groups for ALB and ECS Tasks
 resource "aws_security_group" "alb_sg" {
   name   = "alb-sg"
   vpc_id = data.aws_vpc.default.id
@@ -125,7 +122,7 @@ resource "aws_security_group" "task_sg" {
   }
 }
 
-# ALB and Target Groups
+# Application Load Balancer and Target Groups
 resource "aws_lb" "strapi_alb" {
   name               = "strapi-alb"
   internal           = false
