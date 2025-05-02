@@ -1,11 +1,9 @@
-resource "aws_ecs_cluster" "strapi_cluster" {
-  name = "strapi-cluster"
-}
-
+# Create VPC
 resource "aws_vpc" "main" {
   cidr_block = "10.0.0.0/16"
 }
 
+# Create Public Subnets
 resource "aws_subnet" "public_a" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.1.0/24"
@@ -20,10 +18,12 @@ resource "aws_subnet" "public_b" {
   map_public_ip_on_launch = true
 }
 
+# Create Internet Gateway
 resource "aws_internet_gateway" "igw" {
   vpc_id = aws_vpc.main.id
 }
 
+# Create Route Table for Public Subnets
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
 
@@ -33,6 +33,7 @@ resource "aws_route_table" "public" {
   }
 }
 
+# Route Table Associations
 resource "aws_route_table_association" "a" {
   subnet_id      = aws_subnet.public_a.id
   route_table_id = aws_route_table.public.id
@@ -43,6 +44,7 @@ resource "aws_route_table_association" "b" {
   route_table_id = aws_route_table.public.id
 }
 
+# Create Security Group for ECS
 resource "aws_security_group" "ecs_sg" {
   name        = "ecs-sg"
   description = "Allow inbound traffic"
@@ -63,6 +65,7 @@ resource "aws_security_group" "ecs_sg" {
   }
 }
 
+# Create Load Balancer
 resource "aws_lb" "strapi_alb" {
   name               = "strapi-alb"
   internal           = false
@@ -71,6 +74,7 @@ resource "aws_lb" "strapi_alb" {
   subnets            = [aws_subnet.public_a.id, aws_subnet.public_b.id]
 }
 
+# Create Target Groups for Blue/Green Deployment
 resource "aws_lb_target_group" "blue" {
   name     = "strapi-blue-tg"
   port     = 1337
@@ -103,6 +107,7 @@ resource "aws_lb_target_group" "green" {
   }
 }
 
+# Create Load Balancer Listener
 resource "aws_lb_listener" "listener" {
   load_balancer_arn = aws_lb.strapi_alb.arn
   port              = 80
@@ -114,6 +119,7 @@ resource "aws_lb_listener" "listener" {
   }
 }
 
+# Create IAM Role for CodeDeploy
 resource "aws_iam_role" "codedeploy_role" {
   name = "CodeDeployServiceRole"
 
@@ -131,20 +137,23 @@ resource "aws_iam_role" "codedeploy_role" {
   })
 }
 
+# Attach IAM Policy to Role
 resource "aws_iam_role_policy_attachment" "codedeploy_attach" {
   role       = aws_iam_role.codedeploy_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSCodeDeployRoleForECS"
 }
 
+# Create CodeDeploy Application
 resource "aws_codedeploy_app" "strapi_app" {
-  name = "strapi-app"
-  compute_platform = "ECS"
+  name              = "strapi-app"
+  compute_platform  = "ECS"
 }
 
+# Create CodeDeploy Deployment Group
 resource "aws_codedeploy_deployment_group" "strapi_dg" {
-  app_name              = aws_codedeploy_app.strapi_app.name
-  deployment_group_name = "strapi-dg"
-  service_role_arn      = aws_iam_role.codedeploy_role.arn
+  app_name               = aws_codedeploy_app.strapi_app.name
+  deployment_group_name  = "strapi-dg"
+  service_role_arn       = aws_iam_role.codedeploy_role.arn
   deployment_config_name = "CodeDeployDefault.ECSAllAtOnce"
 
   blue_green_deployment_config {
@@ -187,9 +196,47 @@ resource "aws_codedeploy_deployment_group" "strapi_dg" {
   depends_on = [aws_lb_listener.listener]
 }
 
+# Create ECS Cluster
+resource "aws_ecs_cluster" "strapi_cluster" {
+  name = "strapi-cluster"
+}
+
+# Register ECS Task Definition
+resource "aws_ecs_task_definition" "strapi_task_definition" {
+  family                   = "strapi-task-def"
+  execution_role_arn       = aws_iam_role.ecs_execution_role.arn
+  task_role_arn            = aws_iam_role.ecs_task_role.arn
+  network_mode            = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+
+  container_definitions = jsonencode([
+    {
+      name      = "strapi"
+      image     = "your-ecr-repo-url:latest" # replace with your ECR image URI
+      memory    = 512
+      cpu       = 256
+      portMappings = [
+        {
+          containerPort = 1337
+          hostPort      = 1337
+        }
+      ]
+          environment = [
+      { name = "APP_KEYS",            value = join(",", [for i in range(4) : base64encode(uuid())]) },
+      { name = "API_TOKEN_SALT",      value = base64encode(uuid()) },
+      { name = "ADMIN_JWT_SECRET",    value = base64encode(uuid()) },
+      { name = "TRANSFER_TOKEN_SALT", value = base64encode(uuid()) },
+      { name = "JWT_SECRET",          value = base64encode(uuid()) }
+    ]
+    }
+  ])
+}
+
+# Create ECS Service
 resource "aws_ecs_service" "strapi_service" {
   name            = "strapi-service"
   cluster         = aws_ecs_cluster.strapi_cluster.id
+  task_definition = aws_ecs_task_definition.strapi_task_definition.arn
   launch_type     = "FARGATE"
   desired_count   = 1
   platform_version = "LATEST"
