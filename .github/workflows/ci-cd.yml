@@ -92,9 +92,12 @@ jobs:
           # Convert JSON content for deployment revision
           APPSPEC_CONTENT=$(jq -c . < appspec.rendered.json)
 
+          # Escape JSON content properly for AWS CLI
+          ESCAPED_APPSPEC_CONTENT=$(echo $APPSPEC_CONTENT | sed 's/"/\\"/g')
+
           # Ensure proper escaping for AWS CLI command
           aws deploy create-deployment \
             --application-name strapi-app \
             --deployment-group-name strapi-dg \
             --deployment-config-name CodeDeployDefault.ECSAllAtOnce \
-            --revision "{\"appSpecContent\":{\"content\":$APPSPEC_CONTENT}}"
+            --revision "{\"appSpecContent\":{\"content\":\"$ESCAPED_APPSPEC_CONTENT\"}}"
