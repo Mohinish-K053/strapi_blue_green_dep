@@ -40,6 +40,7 @@ jobs:
         if: ${{ github.event.inputs.destroy != 'true' }}
         run: |
           IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/$ECR_REPO_NAME:${{ github.sha }}
+          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
           docker build -t $IMAGE_URI .
           docker push $IMAGE_URI
 
@@ -59,16 +60,16 @@ jobs:
             terraform destroy -auto-approve -var="ecr_image_uri=dummy"
           else
             terraform apply -auto-approve \
-              -var="ecr_image_uri=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO_NAME }}:${{ github.sha }}"
+              -var="ecr_image_uri=${{ env.IMAGE_URI }}"
           fi
 
-      - name: Replace Image URI in taskdef.json
+      - name: Render Task Definition
         if: ${{ github.event.inputs.destroy != 'true' }}
         run: |
-          IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO_NAME }}:${{ github.sha }}
-          sed "s|REPLACE_IMAGE_URI|$IMAGE_URI|g" taskdef.json > taskdef.rendered.json
+          sed "s|{{IMAGE_URI}}|${{ env.IMAGE_URI }}|g" taskdef.template.json |
+          sed "s|{{AWS_ACCOUNT_ID}}|${{ secrets.AWS_ACCOUNT_ID }}|g" > taskdef.rendered.json
 
-      - name: Register Task Definition
+      - name: Register ECS Task Definition
         if: ${{ github.event.inputs.destroy != 'true' }}
         id: register-task
         run: |
@@ -77,17 +78,19 @@ jobs:
             --query "taskDefinition.taskDefinitionArn" --output text)
           echo "TASK_DEF_ARN=$TASK_DEF_ARN" >> $GITHUB_ENV
 
-      - name: Replace Task Def ARN in appspec.json
+      - name: Render AppSpec Inline
         if: ${{ github.event.inputs.destroy != 'true' }}
         run: |
-          sed "s|REPLACE_TASK_DEFINITION_ARN|$TASK_DEF_ARN|g" appspec.json > appspec.rendered.json
+          sed "s|{{TASK_DEF_ARN}}|$TASK_DEF_ARN|g" appspec.template.json > appspec.rendered.json
+          echo "APPSPEC_CONTENT<<EOF" >> $GITHUB_ENV
+          jq -c . < appspec.rendered.json >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
 
       - name: Deploy via CodeDeploy
         if: ${{ github.event.inputs.destroy != 'true' }}
         run: |
-          echo "Deploying via CodeDeploy..."
           aws deploy create-deployment \
             --application-name strapi-app \
             --deployment-group-name strapi-dg \
-            --revision "appSpecContent={content=$(jq -c . < appspec.rendered.json)}" \
-            --deployment-config-name CodeDeployDefault.ECSAllAtOnce
+            --deployment-config-name CodeDeployDefault.ECSAllAtOnce \
+            --revision "appSpecContent={content=${APPSPEC_CONTENT}}"

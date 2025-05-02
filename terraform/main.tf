@@ -184,23 +184,24 @@ resource "aws_ecs_task_definition" "strapi_task" {
   cpu                      = "256"
   memory                   = "512"
   execution_role_arn       = aws_iam_role.ecs_task_execution.arn
+  task_role_arn            = aws_iam_role.ecs_task_execution.arn
 
   container_definitions = jsonencode([{
-    name  = "strapi",
-    image = var.ecr_image_uri,
-    essential = true,
+    name      = "strapi"
+    image     = var.ecr_image_uri
+    essential = true
     portMappings = [{
-      containerPort = var.container_port,
+      containerPort = var.container_port
       hostPort      = var.container_port
-    }],
+    }]
     logConfiguration = {
-      logDriver = "awslogs",
+      logDriver = "awslogs"
       options = {
         awslogs-group         = aws_cloudwatch_log_group.strapi_logs.name,
         awslogs-region        = var.aws_region,
         awslogs-stream-prefix = "strapi"
       }
-    },
+    }
     environment = [
       { name = "APP_KEYS",            value = join(",", [for i in range(4) : base64encode(uuid())]) },
       { name = "API_TOKEN_SALT",      value = base64encode(uuid()) },
@@ -309,50 +310,10 @@ resource "aws_cloudwatch_metric_alarm" "cpu_high" {
   period              = 60
   statistic           = "Average"
   threshold           = 80
-  alarm_description   = "Alarm when ECS CPU exceeds 80%"
   dimensions = {
     ClusterName = aws_ecs_cluster.strapi_cluster.name
     ServiceName = aws_ecs_service.strapi_service.name
   }
-}
 
-resource "aws_cloudwatch_metric_alarm" "memory_high" {
-  alarm_name          = "HighMemoryUtilization"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 2
-  metric_name         = "MemoryUtilization"
-  namespace           = "AWS/ECS"
-  period              = 60
-  statistic           = "Average"
-  threshold           = 80
-  alarm_description   = "Alarm when ECS memory exceeds 80%"
-  dimensions = {
-    ClusterName = aws_ecs_cluster.strapi_cluster.name
-    ServiceName = aws_ecs_service.strapi_service.name
-  }
-}
-
-resource "aws_cloudwatch_dashboard" "ecs_dashboard" {
-  dashboard_name = "StrapiEcsDashboard"
-  dashboard_body = jsonencode({
-    widgets = [
-      {
-        type = "metric",
-        x = 0,
-        y = 0,
-        width = 12,
-        height = 6,
-        properties = {
-          metrics = [
-            ["AWS/ECS", "CPUUtilization", "ClusterName", aws_ecs_cluster.strapi_cluster.name, "ServiceName", aws_ecs_service.strapi_service.name],
-            [".", "MemoryUtilization", ".", ".", ".", "."]
-          ],
-          view    = "timeSeries",
-          stacked = false,
-          region  = var.aws_region,
-          title   = "ECS Service Metrics"
-        }
-      }
-    ]
-  })
+  alarm_actions = ["arn:aws:sns:us-east-1:123456789012:my-topic"]
 }
