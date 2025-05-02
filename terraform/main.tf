@@ -10,12 +10,9 @@ data "aws_subnets" "default" {
   }
 }
 
-# ECR Repository (with lifecycle to avoid error when it already exists)
+# ECR Repository (import existing one using: terraform import aws_ecr_repository.strapi_repo strapi-repo)
 resource "aws_ecr_repository" "strapi_repo" {
   name = "strapi-repo"
-  lifecycle {
-    ignore_changes = [name]  # Ignore changes to the name (avoid recreate if it exists)
-  }
 }
 
 # ECS Cluster
@@ -307,7 +304,7 @@ resource "aws_codedeploy_deployment_group" "strapi_dg" {
   depends_on = [aws_ecs_service.strapi_service]
 }
 
-# CloudWatch Alarms
+# CloudWatch Alarms and Dashboard
 resource "aws_cloudwatch_metric_alarm" "cpu_high" {
   alarm_name          = "HighCPUUtilization"
   comparison_operator = "GreaterThanThreshold"

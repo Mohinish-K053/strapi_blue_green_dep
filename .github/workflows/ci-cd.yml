@@ -56,6 +56,13 @@ jobs:
         working-directory: ./terraform
         run: terraform init
 
+      - name: Import ECS Service for Blue/Green
+        if: ${{ github.event.inputs.destroy != 'true' }}
+        working-directory: ./terraform
+        run: |
+          terraform import aws_codedeploy_deployment_group.strapi_codedeploy_group \
+            strapi-app:strapi-dg || echo "Import failed or already done. Continuing..."
+
       - name: Apply or Destroy Terraform
         working-directory: ./terraform
         run: |
