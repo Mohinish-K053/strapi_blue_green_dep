@@ -66,28 +66,9 @@ jobs:
               -var="ecr_image_uri=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO_NAME }}:${{ github.sha }}"
           fi
 
-      - name: Register ECS Task Definition
+      - name: Fetch Latest Task Definition ARN
         if: ${{ github.event.inputs.destroy != 'true' }}
-        run: |
-          IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO_NAME }}:${{ github.sha }}"
-          echo "Registering new ECS task definition with image: $IMAGE_URI"
-
-          aws ecs register-task-definition \
-            --family strapi-task \
-            --network-mode awsvpc \
-            --requires-compatibilities FARGATE \
-            --cpu "512" \
-            --memory "1024" \
-            --execution-role-arn arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/ecsTaskExecutionRole \
-            --container-definitions "[{
-              \"name\": \"strapi\",
-              \"image\": \"$IMAGE_URI\",
-              \"portMappings\": [{\"containerPort\": 1337}],
-              \"essential\": true
-            }]"
-
-      - name: Get Task Definition ARN & Create AppSpec Content
-        if: ${{ github.event.inputs.destroy != 'true' }}
+        id: fetch-taskdef
         run: |
           TASK_DEF_ARN=$(aws ecs list-task-definitions \
             --family-prefix strapi-task \
@@ -101,12 +82,14 @@ jobs:
             exit 1
           fi
 
-          echo "Using Task Definition ARN: $TASK_DEF_ARN"
+          echo "task_def_arn=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
 
-          # Create AppSpec file
-          jq -n --arg TASK_DEF "$TASK_DEF_ARN" '{
+      - name: Create AppSpec File
+        if: ${{ github.event.inputs.destroy != 'true' }}
+        run: |
+          jq -n --arg TASK_DEF "${{ steps.fetch-taskdef.outputs.task_def_arn }}" '{
             version: 1,
-            Resources: [{
+            Resources: [ {
               TargetService: {
                 Type: "AWS::ECS::Service",
                 Properties: {
@@ -120,18 +103,12 @@ jobs:
             }]
           }' > appspec.json
 
-      - name: Deploy with CodeDeploy
+      - name: Deploy via CodeDeploy
         if: ${{ github.event.inputs.destroy != 'true' }}
         run: |
-          # Read and encode AppSpec content
-          APPSPEC_CONTENT=$(cat appspec.json | jq -c .)
-
-          DEPLOYMENT_JSON=$(jq -nc --arg content "$APPSPEC_CONTENT" \
-            '{revisionType: "AppSpecContent", appSpecContent: {content: $content}}')
-
-          echo "Triggering deployment with CodeDeploy..."
+          echo "Creating CodeDeploy deployment..."
           aws deploy create-deployment \
             --application-name strapi-app \
             --deployment-group-name strapi-dg \
-            --revision "$DEPLOYMENT_JSON" \
+            --revision "appSpecContent={content=$(jq -c . < appspec.json)}" \
             --deployment-config-name CodeDeployDefault.ECSAllAtOnce
