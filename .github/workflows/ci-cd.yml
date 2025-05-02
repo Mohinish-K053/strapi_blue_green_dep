@@ -59,8 +59,7 @@ jobs:
           if [ "${{ github.event.inputs.destroy }}" = "true" ]; then
             terraform destroy -auto-approve -var="ecr_image_uri=dummy"
           else
-            terraform apply -auto-approve \
-              -var="ecr_image_uri=${{ env.IMAGE_URI }}"
+            terraform apply -auto-approve -var="ecr_image_uri=${{ env.IMAGE_URI }}"
           fi
 
       - name: Render Task Definition
@@ -77,20 +76,25 @@ jobs:
             --cli-input-json file://taskdef.rendered.json \
             --query "taskDefinition.taskDefinitionArn" --output text)
           echo "TASK_DEF_ARN=$TASK_DEF_ARN" >> $GITHUB_ENV
+          echo "::set-output name=task_definition_arn::$TASK_DEF_ARN"
 
-      - name: Render AppSpec Inline
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Render AppSpec JSON
         if: ${{ github.event.inputs.destroy != 'true' }}
         run: |
           sed "s|{{TASK_DEF_ARN}}|$TASK_DEF_ARN|g" appspec.template.json > appspec.rendered.json
-          echo "APPSPEC_CONTENT<<EOF" >> $GITHUB_ENV
-          jq -c . < appspec.rendered.json >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
 
       - name: Deploy via CodeDeploy
         if: ${{ github.event.inputs.destroy != 'true' }}
         run: |
+          # Convert JSON content for deployment revision
+          APPSPEC_CONTENT=$(jq -c . < appspec.rendered.json)
+
+          # Ensure proper escaping for AWS CLI command
           aws deploy create-deployment \
             --application-name strapi-app \
             --deployment-group-name strapi-dg \
             --deployment-config-name CodeDeployDefault.ECSAllAtOnce \
-            --revision "appSpecContent={content=${APPSPEC_CONTENT}}"
+            --revision "{\"appSpecContent\":{\"content\":$APPSPEC_CONTENT}}"
