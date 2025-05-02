@@ -10,10 +10,8 @@ data "aws_subnets" "default" {
   }
 }
 
-# ECR Repository (import existing one using: terraform import aws_ecr_repository.strapi_repo strapi-repo)
-resource "aws_ecr_repository" "strapi_repo" {
-  name = "strapi-repo"
-}
+# NOTE: ECR repository is created by CI/CD pipeline.
+# Do not define it in Terraform to avoid conflicts.
 
 # ECS Cluster
 resource "aws_ecs_cluster" "strapi_cluster" {
